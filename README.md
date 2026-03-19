@@ -5,9 +5,13 @@ Home Assistant custom integration for Control iD FaceID and Access devices with:
 - Config Flow setup from the UI
 - Automatic device monitor configuration through `set_configuration.fcgi`
 - Live webhook handling for `/dao` and `/secbox`
+- Direct door-state read on startup with webhook fallback
 - Door state binary sensor
 - Last access sensor with event mapping and friendly user-name mapping
+- Last authorized user sensor
+- Registered users count sensor
 - Gate open button using `execute_actions.fcgi`
+- Sync Users button to import names directly from the device
 - Automatic session re-login when the device expires the current session
 
 ## Features
@@ -15,8 +19,11 @@ Home Assistant custom integration for Control iD FaceID and Access devices with:
 This integration creates:
 
 - A `button` entity to open the gate
-- A `binary_sensor` entity for door state from `secbox.open`
-- A `sensor` entity for the last access event from `dao`
+- A `button` entity to sync users from the device
+- A `binary_sensor` entity for door state
+- A `sensor` entity for the latest access event
+- A `sensor` entity for the latest authorized user
+- A `sensor` entity for total registered users on the device
 
 The access sensor maps:
 
@@ -64,6 +71,8 @@ This integration handles both:
 
 It also accepts the base webhook path and auto-detects payload type when possible.
 
+Depending on firmware or product family, the integration also accepts `door`-style payloads for door-state updates.
+
 ## Integration Options
 
 After setup, open the integration options to configure:
@@ -75,6 +84,40 @@ Example:
 ```python
 {"1000009": "Irlan", "1000010": "Maria"}
 ```
+
+## Startup Behavior
+
+On startup, the integration attempts to populate current state immediately so entities do not remain `unknown` waiting for the next webhook.
+
+It will:
+
+- Load registered users count from the device
+- Load the latest access log for `Last Access`
+- Load the latest authorized access log (`event = 7`) for `Last Access User`
+- Read the current door state directly from `door_state.fcgi` when supported
+- Fall back to the latest door/secbox event if direct door-state reading is not available
+
+## User Sync
+
+The `Sync Users` button imports registered users from the device using `load_objects.fcgi` and stores them in the integration `user_map`.
+
+After syncing:
+
+- `Last Access User` will show the friendly name when available
+- `Last Access` attributes will include `user_name` and `user_display`
+- `Registered Users` will show the total number of users loaded from the device
+
+`Last Access User` tracks the latest authorized access only. It does not switch to `user_id = 0` on later `Door Opened` events.
+
+## Updating
+
+If you are inside Home Assistant's `custom_components` folder, update the integration with:
+
+```bash
+rm -rf controlid_faceid && git clone --depth 1 https://github.com/devprbtt/home-assistant-controlid-faceid.git temp-controlid && mv temp-controlid/custom_components/controlid_faceid ./controlid_faceid && rm -rf temp-controlid
+```
+
+Then restart Home Assistant.
 
 ## Notes
 
