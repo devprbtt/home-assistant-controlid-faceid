@@ -93,8 +93,8 @@ class ControlIDLastAccessUserSensor(SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        """Return the friendly user name or the raw user ID."""
-        user_id = self._runtime.state.last_access_user_id
+        """Return the last authorized friendly user name or raw user ID."""
+        user_id = self._runtime.state.last_authorized_user_id
         if user_id is None:
             return None
         return self._runtime.user_map.get(user_id, user_id)
@@ -102,13 +102,14 @@ class ControlIDLastAccessUserSensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, object]:
         """Expose the underlying user data."""
-        user_id = self._runtime.state.last_access_user_id
+        user_id = self._runtime.state.last_authorized_user_id
         return {
             "user_id": user_id,
             "user_name": self._runtime.user_map.get(user_id) if user_id else None,
-            "event": self._runtime.state.last_access_event_name,
-            "event_code": self._runtime.state.last_access_event_code,
-            "timestamp": self._runtime.state.last_access_timestamp,
+            "event": self._runtime.state.last_authorized_event_name,
+            "event_code": self._runtime.state.last_authorized_event_code,
+            "timestamp": self._runtime.state.last_authorized_timestamp,
+            "log_id": self._runtime.state.last_authorized_log_id,
         }
 
     async def async_added_to_hass(self) -> None:

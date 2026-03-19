@@ -78,6 +78,11 @@ class ControlIDState:
     last_access_type: str | None = None
     last_access_timestamp: datetime | None = None
     last_access_log_id: str | None = None
+    last_authorized_user_id: str | None = None
+    last_authorized_event_code: str | None = None
+    last_authorized_event_name: str | None = None
+    last_authorized_timestamp: datetime | None = None
+    last_authorized_log_id: str | None = None
     registered_users_count: int | None = None
 
 
@@ -147,6 +152,12 @@ class ControlIDRuntime:
                 str(values.get("id")) if values.get("id") is not None else None
             )
             self.state.device_id = payload.get("device_id", self.state.device_id)
+            if event_code == "7":
+                self.state.last_authorized_user_id = self.state.last_access_user_id
+                self.state.last_authorized_event_code = event_code
+                self.state.last_authorized_event_name = self.state.last_access_event_name
+                self.state.last_authorized_timestamp = self.state.last_access_timestamp
+                self.state.last_authorized_log_id = self.state.last_access_log_id
             self.async_notify()
             return
 
@@ -188,6 +199,37 @@ class ControlIDRuntime:
                         }
                     ]
                 }
+            )
+
+        try:
+            authorized_log = await self.client.async_load_latest_authorized_access_log()
+        except ControlIDError as err:
+            _LOGGER.debug(
+                "Unable to load latest authorized access log during startup for %s: %s",
+                self.client.host,
+                err,
+            )
+        else:
+            self.state.last_authorized_user_id = (
+                str(authorized_log.get("user_id"))
+                if authorized_log.get("user_id") is not None
+                else None
+            )
+            self.state.last_authorized_event_code = (
+                str(authorized_log.get("event"))
+                if authorized_log.get("event") is not None
+                else None
+            )
+            self.state.last_authorized_event_name = (
+                EVENT_MAP.get(self.state.last_authorized_event_code, self.state.last_authorized_event_code)
+                if self.state.last_authorized_event_code is not None
+                else None
+            )
+            self.state.last_authorized_timestamp = _utc_from_timestamp(authorized_log.get("time"))
+            self.state.last_authorized_log_id = (
+                str(authorized_log.get("id"))
+                if authorized_log.get("id") is not None
+                else None
             )
 
         try:
@@ -400,6 +442,43 @@ class ControlIDClient:
         latest_log = access_logs[0]
         if not isinstance(latest_log, dict):
             raise ControlIDError(f"Device {self._host} returned an invalid access log entry")
+
+        return latest_log
+
+    async def async_load_latest_authorized_access_log(self) -> dict[str, Any]:
+        """Load the most recent authorized access log from the device."""
+        payload = {
+            "object": "access_logs",
+            "limit": 1,
+            "order": ["id", "descending"],
+            "where": {
+                "access_logs": {
+                    "event": 7,
+                }
+            },
+        }
+
+        try:
+            data = await self._async_post_with_relogin("load_objects.fcgi", json=payload)
+        except ControlIDError as err:
+            raise ControlIDError(
+                f"Unable to load authorized access logs from device {self._host}"
+            ) from err
+
+        if not isinstance(data, dict):
+            raise ControlIDError(
+                f"Unexpected authorized access log response from device {self._host}: {data}"
+            )
+
+        access_logs = data.get("access_logs")
+        if not isinstance(access_logs, list):
+            raise ControlIDError(f"Device {self._host} did not return an access logs list")
+        if not access_logs:
+            raise ControlIDError(f"Device {self._host} returned no authorized access logs")
+
+        latest_log = access_logs[0]
+        if not isinstance(latest_log, dict):
+            raise ControlIDError(f"Device {self._host} returned an invalid authorized access log")
 
         return latest_log
 
