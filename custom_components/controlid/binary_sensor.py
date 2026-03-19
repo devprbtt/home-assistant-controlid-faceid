@@ -1,4 +1,4 @@
-"""Binary sensors for Control iD FaceID."""
+"""Binary sensors for Control iD."""
 
 from __future__ import annotations
 

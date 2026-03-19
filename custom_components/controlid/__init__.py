@@ -17,7 +17,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
-DOMAIN = "controlid_faceid"
+DOMAIN = "controlid"
 
 PLATFORMS: list[Platform] = [Platform.BUTTON, Platform.BINARY_SENSOR, Platform.SENSOR]
 
@@ -621,7 +621,7 @@ class ControlIDWebhookView(HomeAssistantView):
 
     url = "/api/webhook/{webhook_id}"
     extra_urls = ["/api/webhook/{webhook_id}/{suffix}"]
-    name = "api:controlid_faceid:webhook"
+    name = "api:controlid:webhook"
     requires_auth = False
     cors_allowed = True
 

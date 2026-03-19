@@ -26,7 +26,7 @@ from . import (
 )
 
 
-class ControlIDFaceIDConfigFlow(config_entries.ConfigFlow, domain="controlid_faceid"):
+class ControlIDFaceIDConfigFlow(config_entries.ConfigFlow, domain="controlid"):
     """Handle a config flow for Control iD FaceID."""
 
     VERSION = 1

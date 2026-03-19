@@ -1,4 +1,4 @@
-"""Button platform for Control iD FaceID."""
+"""Button platform for Control iD."""
 
 from __future__ import annotations
 

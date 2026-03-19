@@ -41,7 +41,7 @@ You can also configure a `user_map` in the integration options to map device `us
 
 ## Installation
 
-1. Copy this repository's `custom_components/controlid_faceid` folder into your Home Assistant `custom_components` directory.
+1. Copy this repository's `custom_components/controlid` folder into your Home Assistant `custom_components` directory.
 2. Restart Home Assistant.
 3. Go to `Settings` -> `Devices & Services` -> `Add Integration`.
 4. Search for `Control iD FaceID`.
@@ -114,7 +114,7 @@ After syncing:
 If you are inside Home Assistant's `custom_components` folder, update the integration with:
 
 ```bash
-rm -rf controlid_faceid && git clone --depth 1 https://github.com/devprbtt/home-assistant-controlid-faceid.git temp-controlid && mv temp-controlid/custom_components/controlid_faceid ./controlid_faceid && rm -rf temp-controlid
+rm -rf controlid && git clone --depth 1 https://github.com/devprbtt/home-assistant-controlid-faceid.git temp-controlid && mv temp-controlid/custom_components/controlid ./controlid && rm -rf temp-controlid
 ```
 
 Then restart Home Assistant.
@@ -129,7 +129,7 @@ Then restart Home Assistant.
 
 ```text
 custom_components/
-  controlid_faceid/
+  controlid/
     __init__.py
     manifest.json
     config_flow.py

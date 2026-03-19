@@ -1,4 +1,4 @@
-"""Sensors for Control iD FaceID."""
+"""Sensors for Control iD."""
 
 from __future__ import annotations
 
