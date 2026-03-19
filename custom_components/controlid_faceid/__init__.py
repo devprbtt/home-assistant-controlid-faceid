@@ -233,6 +233,27 @@ class ControlIDRuntime:
             )
 
         try:
+            door_state = await self.client.async_get_current_door_state(self.secbox_id)
+        except ControlIDError as err:
+            _LOGGER.debug(
+                "Unable to load direct door state during startup for %s: %s",
+                self.client.host,
+                err,
+            )
+        else:
+            if door_state is not None:
+                self.async_handle_door_state(
+                    {
+                        "secbox": {
+                            "id": door_state.get("id"),
+                            "open": door_state.get("open"),
+                        },
+                    }
+                )
+                self.async_notify()
+                return
+
+        try:
             door_event = await self.client.async_load_latest_door_event()
         except ControlIDError as err:
             _LOGGER.debug(
@@ -513,6 +534,40 @@ class ControlIDClient:
             latest_event = access_events[0]
             if isinstance(latest_event, dict):
                 return latest_event
+
+        return None
+
+    async def async_get_current_door_state(self, secbox_id: int) -> dict[str, Any] | None:
+        """Read the current door state directly from the device."""
+        for path in ("door_state.fcgi", "doors_state.fcgi"):
+            try:
+                data = await self._async_post_with_relogin(path, json={})
+            except ControlIDError as err:
+                _LOGGER.debug(
+                    "Direct door state request %s failed for %s: %s",
+                    path,
+                    self._host,
+                    err,
+                )
+                continue
+
+            if not isinstance(data, dict):
+                continue
+
+            sec_boxes = data.get("sec_boxes")
+            if isinstance(sec_boxes, list):
+                for sec_box in sec_boxes:
+                    if not isinstance(sec_box, dict):
+                        continue
+                    current_id = sec_box.get("id")
+                    if current_id == secbox_id:
+                        return sec_box
+                if sec_boxes and isinstance(sec_boxes[0], dict):
+                    return sec_boxes[0]
+
+            doors = data.get("doors")
+            if isinstance(doors, list) and doors and isinstance(doors[0], dict):
+                return doors[0]
 
         return None
 
