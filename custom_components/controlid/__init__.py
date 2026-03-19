@@ -16,6 +16,7 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, Platfor
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.device_registry import DeviceInfo
 
 DOMAIN = "controlid"
 
@@ -171,6 +172,17 @@ class ControlIDRuntime:
     def secbox_id(self) -> int:
         """Return configured secbox ID."""
         return int(self.entry.data.get(CONF_SECBOX_ID, DEFAULT_SECBOX_ID))
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device metadata for Home Assistant entity grouping."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.entry.unique_id or self.entry.entry_id)},
+            manufacturer="Control iD",
+            model="FaceID / Access",
+            name=self.entry.title,
+            configuration_url=f"http://{self.client.host}",
+        )
 
     async def async_initialize_state(self) -> None:
         """Populate current state from the device on startup."""

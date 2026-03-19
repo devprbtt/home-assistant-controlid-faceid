@@ -5,6 +5,7 @@ from __future__ import annotations
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DATA_RUNTIME, DOMAIN
@@ -38,6 +39,7 @@ class ControlIDLastAccessSensor(SensorEntity):
         self._runtime = runtime
         self._remove_listener = None
         self._attr_unique_id = f"{runtime.entry.entry_id}_last_access"
+        self._attr_device_info = runtime.device_info
 
     @property
     def native_value(self) -> str | None:
@@ -90,6 +92,7 @@ class ControlIDLastAccessUserSensor(SensorEntity):
         self._runtime = runtime
         self._remove_listener = None
         self._attr_unique_id = f"{runtime.entry.entry_id}_last_access_user"
+        self._attr_device_info = runtime.device_info
 
     @property
     def native_value(self) -> str | None:
@@ -133,12 +136,14 @@ class ControlIDRegisteredUsersCountSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_name = "Registered Users"
     _attr_icon = "mdi:account-group"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, runtime) -> None:
         """Initialize the sensor."""
         self._runtime = runtime
         self._remove_listener = None
         self._attr_unique_id = f"{runtime.entry.entry_id}_registered_users"
+        self._attr_device_info = runtime.device_info
 
     @property
     def native_value(self) -> int | None:

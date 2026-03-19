@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -31,6 +32,7 @@ class ControlIDOpenGateButton(ButtonEntity):
         """Initialize the entity."""
         self._runtime = runtime
         self._attr_unique_id = f"{runtime.entry.entry_id}_open_gate"
+        self._attr_device_info = runtime.device_info
 
     async def async_press(self) -> None:
         """Open the gate."""
@@ -43,11 +45,13 @@ class ControlIDSyncUsersButton(ButtonEntity):
     _attr_has_entity_name = True
     _attr_name = "Sync Users"
     _attr_icon = "mdi:account-sync"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, runtime) -> None:
         """Initialize the entity."""
         self._runtime = runtime
         self._attr_unique_id = f"{runtime.entry.entry_id}_sync_users"
+        self._attr_device_info = runtime.device_info
 
     async def async_press(self) -> None:
         """Import users from the device into the user map."""

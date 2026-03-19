@@ -32,6 +32,7 @@ class ControlIDDoorStateBinarySensor(BinarySensorEntity):
         self._runtime = runtime
         self._remove_listener = None
         self._attr_unique_id = f"{runtime.entry.entry_id}_door_state"
+        self._attr_device_info = runtime.device_info
 
     @property
     def is_on(self) -> bool | None:
