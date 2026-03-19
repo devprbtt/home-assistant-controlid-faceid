@@ -8,7 +8,7 @@ import logging
 from typing import Any
 from urllib.parse import urlparse
 
-from aiohttp import ClientError, ClientResponse, ClientSession, CookieJar, web
+from aiohttp import ClientError, ClientResponse, ClientSession, CookieJar, ContentTypeError, web
 
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.config_entries import ConfigEntry
@@ -78,6 +78,7 @@ class ControlIDState:
     last_access_type: str | None = None
     last_access_timestamp: datetime | None = None
     last_access_log_id: str | None = None
+    registered_users_count: int | None = None
 
 
 @dataclass
@@ -85,6 +86,7 @@ class ControlIDRuntime:
     """Runtime data for a config entry."""
 
     entry: ConfigEntry
+    hass: HomeAssistant
     client: "ControlIDClient"
     webhook_id: str
     webhook_path: str
@@ -109,12 +111,12 @@ class ControlIDRuntime:
             listener()
 
     @callback
-    def async_handle_secbox(self, payload: dict[str, Any]) -> None:
-        """Store secbox webhook payload."""
-        secbox = payload.get("secbox") or {}
-        if "open" in secbox:
-            self.state.door_open = bool(secbox["open"])
-        self.state.door_id = secbox.get("id")
+    def async_handle_door_state(self, payload: dict[str, Any]) -> None:
+        """Store secbox or door webhook payload."""
+        door_state = payload.get("secbox") or payload.get("door") or {}
+        if "open" in door_state:
+            self.state.door_open = bool(door_state["open"])
+        self.state.door_id = door_state.get("id")
         self.state.device_id = payload.get("device_id", self.state.device_id)
         self.state.access_event_id = payload.get("access_event_id")
         self.state.door_updated_at = _utc_from_timestamp(payload.get("time"))
@@ -159,6 +161,80 @@ class ControlIDRuntime:
         """Return configured secbox ID."""
         return int(self.entry.data.get(CONF_SECBOX_ID, DEFAULT_SECBOX_ID))
 
+    async def async_initialize_state(self) -> None:
+        """Populate current state from the device on startup."""
+        try:
+            users = await self.client.async_load_users()
+            self.state.registered_users_count = len(users)
+        except ControlIDError as err:
+            _LOGGER.debug("Unable to load users during startup for %s: %s", self.client.host, err)
+
+        try:
+            access_log = await self.client.async_load_latest_access_log()
+        except ControlIDError as err:
+            _LOGGER.debug(
+                "Unable to load latest access log during startup for %s: %s",
+                self.client.host,
+                err,
+            )
+        else:
+            self.async_handle_dao(
+                {
+                    "object_changes": [
+                        {
+                            "object": "access_logs",
+                            "type": "startup",
+                            "values": access_log,
+                        }
+                    ]
+                }
+            )
+
+        try:
+            door_event = await self.client.async_load_latest_door_event()
+        except ControlIDError as err:
+            _LOGGER.debug(
+                "Unable to load latest door event during startup for %s: %s",
+                self.client.host,
+                err,
+            )
+        else:
+            if door_event is not None:
+                self.async_handle_door_state(
+                    {
+                        "secbox": {
+                            "id": door_event.get("identification"),
+                            "open": str(door_event.get("type")).upper() == "OPEN",
+                        },
+                        "time": door_event.get("timestamp"),
+                    }
+                )
+
+        self.async_notify()
+
+    async def async_sync_users(self) -> int:
+        """Import users from the device into the friendly-name map."""
+        users = await self.client.async_load_users()
+        merged_map = dict(self.user_map)
+        self.state.registered_users_count = len(users)
+
+        for user in users:
+            user_id = user.get("id")
+            user_name = user.get("name")
+            if user_id in (None, "") or not user_name:
+                continue
+            merged_map[str(user_id)] = str(user_name)
+
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            options={
+                **self.entry.options,
+                CONF_USER_MAP: merged_map,
+            },
+        )
+        self.async_notify()
+        return len(merged_map)
+
 
 class ControlIDClient:
     """Minimal Control iD HTTP client."""
@@ -200,26 +276,34 @@ class ControlIDClient:
             return await self.async_login()
         return self._session_token
 
-    async def _async_raise_for_session_error(self, response: ClientResponse) -> None:
-        """Inspect responses for session expiry errors."""
+    async def _async_parse_response(self, response: ClientResponse) -> Any:
+        """Parse a response body as JSON when possible, otherwise as text."""
+        try:
+            return await response.json(content_type=None)
+        except (ValueError, ContentTypeError):
+            return await response.text()
+
+    async def _async_raise_for_session_error(self, response: ClientResponse) -> Any:
+        """Inspect responses for session expiry errors and return parsed content."""
+        parsed = await self._async_parse_response(response)
+
         if response.status == 401:
             raise ControlIDSessionExpiredError(f"Session expired for device {self._host}")
 
         if response.status >= 400:
-            body = await response.text()
+            body = parsed if isinstance(parsed, str) else str(parsed)
             if "session" in body.lower():
                 raise ControlIDSessionExpiredError(f"Session expired for device {self._host}")
             raise ControlIDError(f"Device {self._host} returned HTTP {response.status}: {body}")
 
-        try:
-            data = await response.json(content_type=None)
-        except ValueError:
-            return
-
-        if isinstance(data, dict):
-            message = str(data.get("error") or data.get("message") or "")
+        if isinstance(parsed, dict):
+            message = str(parsed.get("error") or parsed.get("message") or "")
             if "session" in message.lower():
                 raise ControlIDSessionExpiredError(f"Session expired for device {self._host}")
+        elif isinstance(parsed, str) and "session" in parsed.lower():
+            raise ControlIDSessionExpiredError(f"Session expired for device {self._host}")
+
+        return parsed
 
     async def _async_post_with_relogin(
         self,
@@ -227,7 +311,7 @@ class ControlIDClient:
         *,
         data: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> Any:
         """POST to an authenticated endpoint and retry once on session expiry."""
         last_error: Exception | None = None
 
@@ -243,8 +327,7 @@ class ControlIDClient:
                     json=json,
                     headers={"Cookie": f"session={session_token}"},
                 )
-                await self._async_raise_for_session_error(response)
-                return
+                return await self._async_raise_for_session_error(response)
             except ControlIDSessionExpiredError as err:
                 last_error = err
                 self._session_token = None
@@ -274,6 +357,86 @@ class ControlIDClient:
         except ControlIDError as err:
             raise ControlIDError(f"Unable to trigger gate opening on {self._host}") from err
 
+    async def async_load_users(self) -> list[dict[str, Any]]:
+        """Load registered users from the device."""
+        payload = {"object": "users"}
+
+        try:
+            data = await self._async_post_with_relogin("load_objects.fcgi", json=payload)
+        except ControlIDError as err:
+            raise ControlIDError(f"Unable to load users from device {self._host}") from err
+
+        if not isinstance(data, dict):
+            raise ControlIDError(f"Unexpected user list response from device {self._host}: {data}")
+
+        users = data.get("users")
+        if not isinstance(users, list):
+            raise ControlIDError(f"Device {self._host} did not return a users list")
+
+        return [user for user in users if isinstance(user, dict)]
+
+    async def async_load_latest_access_log(self) -> dict[str, Any]:
+        """Load the most recent access log from the device."""
+        payload = {
+            "object": "access_logs",
+            "limit": 1,
+            "order": ["id", "descending"],
+        }
+
+        try:
+            data = await self._async_post_with_relogin("load_objects.fcgi", json=payload)
+        except ControlIDError as err:
+            raise ControlIDError(f"Unable to load access logs from device {self._host}") from err
+
+        if not isinstance(data, dict):
+            raise ControlIDError(f"Unexpected access log response from device {self._host}: {data}")
+
+        access_logs = data.get("access_logs")
+        if not isinstance(access_logs, list):
+            raise ControlIDError(f"Device {self._host} did not return an access logs list")
+        if not access_logs:
+            raise ControlIDError(f"Device {self._host} returned no access logs")
+
+        latest_log = access_logs[0]
+        if not isinstance(latest_log, dict):
+            raise ControlIDError(f"Device {self._host} returned an invalid access log entry")
+
+        return latest_log
+
+    async def async_load_latest_door_event(self) -> dict[str, Any] | None:
+        """Load the latest door or secbox event and infer current state."""
+        for event_name in ("secbox", "door"):
+            payload = {
+                "object": "access_events",
+                "limit": 1,
+                "order": ["id", "descending"],
+                "where": {
+                    "access_events": {
+                        "event": event_name,
+                    }
+                },
+            }
+
+            try:
+                data = await self._async_post_with_relogin("load_objects.fcgi", json=payload)
+            except ControlIDError as err:
+                raise ControlIDError(
+                    f"Unable to load door state events from device {self._host}"
+                ) from err
+
+            if not isinstance(data, dict):
+                continue
+
+            access_events = data.get("access_events")
+            if not isinstance(access_events, list) or not access_events:
+                continue
+
+            latest_event = access_events[0]
+            if isinstance(latest_event, dict):
+                return latest_event
+
+        return None
+
     async def async_configure_monitor(self, base_url: str, webhook_path: str) -> None:
         """Configure the device monitor to point to Home Assistant."""
         parsed = urlparse(base_url)
@@ -284,7 +447,7 @@ class ControlIDClient:
         if port is None:
             port = 443 if parsed.scheme == "https" else 80
 
-        payload = {
+        full_payload = {
             "monitor": {
                 "request_timeout": DEFAULT_REQUEST_TIMEOUT_MS,
                 "hostname": parsed.hostname,
@@ -293,11 +456,30 @@ class ControlIDClient:
                 "inform_access_event_id": 1,
             }
         }
+        fallback_payload = {
+            "monitor": {
+                "hostname": parsed.hostname,
+                "port": str(port),
+                "path": webhook_path.lstrip("/"),
+            }
+        }
 
         try:
-            await self._async_post_with_relogin("set_configuration.fcgi", json=payload)
+            await self._async_post_with_relogin("set_configuration.fcgi", json=full_payload)
+            return
         except ControlIDError as err:
-            raise ControlIDError(f"Unable to configure monitor for device {self._host}") from err
+            _LOGGER.debug(
+                "Full monitor configuration failed for %s, retrying with fallback payload: %s",
+                self._host,
+                err,
+            )
+
+        try:
+            await self._async_post_with_relogin("set_configuration.fcgi", json=fallback_payload)
+        except ControlIDError as err:
+            raise ControlIDError(
+                f"Unable to configure monitor for device {self._host}: {err}"
+            ) from err
 
 
 class ControlIDWebhookView(HomeAssistantView):
@@ -330,11 +512,13 @@ class ControlIDWebhookView(HomeAssistantView):
         if not route_key:
             if "secbox" in payload:
                 route_key = "secbox"
+            elif "door" in payload:
+                route_key = "door"
             elif "object_changes" in payload:
                 route_key = "dao"
 
-        if route_key == "secbox":
-            runtime.async_handle_secbox(payload)
+        if route_key in {"secbox", "door"}:
+            runtime.async_handle_door_state(payload)
         elif route_key == "dao":
             runtime.async_handle_dao(payload)
         else:
@@ -367,6 +551,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = ControlIDClient(host, username, password, session)
     runtime = ControlIDRuntime(
         entry=entry,
+        hass=hass,
         client=client,
         webhook_id=webhook_id,
         webhook_path=webhook_path,
@@ -386,6 +571,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await client.async_configure_monitor(base_url, webhook_path)
     except ControlIDError as err:
         raise ConfigEntryNotReady(str(err)) from err
+
+    await runtime.async_initialize_state()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

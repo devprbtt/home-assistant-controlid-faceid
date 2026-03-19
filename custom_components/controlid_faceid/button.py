@@ -17,7 +17,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the button platform."""
     runtime = hass.data[DOMAIN][entry.entry_id][DATA_RUNTIME]
-    async_add_entities([ControlIDOpenGateButton(runtime)])
+    async_add_entities([ControlIDOpenGateButton(runtime), ControlIDSyncUsersButton(runtime)])
 
 
 class ControlIDOpenGateButton(ButtonEntity):
@@ -35,3 +35,20 @@ class ControlIDOpenGateButton(ButtonEntity):
     async def async_press(self) -> None:
         """Open the gate."""
         await self._runtime.client.async_open_gate(self._runtime.secbox_id)
+
+
+class ControlIDSyncUsersButton(ButtonEntity):
+    """Button that imports users from the device."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Sync Users"
+    _attr_icon = "mdi:account-sync"
+
+    def __init__(self, runtime) -> None:
+        """Initialize the entity."""
+        self._runtime = runtime
+        self._attr_unique_id = f"{runtime.entry.entry_id}_sync_users"
+
+    async def async_press(self) -> None:
+        """Import users from the device into the user map."""
+        await self._runtime.async_sync_users()

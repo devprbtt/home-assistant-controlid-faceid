@@ -11,6 +11,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
@@ -75,17 +76,14 @@ class ControlIDFaceIDConfigFlow(config_entries.ConfigFlow, domain="controlid_fac
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     @staticmethod
+    @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
         """Return the options flow handler."""
-        return ControlIDFaceIDOptionsFlow(config_entry)
+        return ControlIDFaceIDOptionsFlow()
 
 
 class ControlIDFaceIDOptionsFlow(config_entries.OptionsFlow):
     """Options flow for Control iD FaceID."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage the integration options."""
@@ -100,11 +98,19 @@ class ControlIDFaceIDOptionsFlow(config_entries.OptionsFlow):
                 return self.async_create_entry(title="", data={CONF_USER_MAP: user_map})
 
         current_map = self.config_entry.options.get(CONF_USER_MAP, {})
+        if not isinstance(current_map, dict):
+            current_map = {}
+
+        try:
+            current_map_text = json.dumps(current_map, indent=2, sort_keys=True)
+        except (TypeError, ValueError):
+            current_map_text = "{}"
+
         schema = vol.Schema(
             {
                 vol.Optional(
                     CONF_USER_MAP,
-                    default=json.dumps(current_map, indent=2, sort_keys=True),
+                    default=current_map_text,
                 ): str,
             }
         )
