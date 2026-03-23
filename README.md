@@ -51,6 +51,16 @@ You can also configure a `user_map` in the integration options to map device `us
    - Password
    - Optional `SecBox ID`
 
+## HACS
+
+You can add this repository to HACS as a custom repository:
+
+1. Open HACS.
+2. Go to the top-right menu and choose `Custom repositories`.
+3. Add `https://github.com/devprbtt/home-assistant-controlid-faceid` as type `Integration`.
+4. Install `Control iD FaceID`.
+5. Restart Home Assistant.
+
 ## Requirements
 
 - Home Assistant must have an `Internal URL` or `External URL` configured.

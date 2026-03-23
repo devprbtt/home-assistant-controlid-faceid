@@ -1,9 +1,10 @@
 {
   "domain": "controlid",
   "name": "Control iD FaceID",
-  "codeowners": [],
+  "codeowners": ["@devprbtt"],
   "config_flow": true,
-  "documentation": "https://www.controlid.com.br/docs/access-api-en/",
+  "documentation": "https://github.com/devprbtt/home-assistant-controlid-faceid",
+  "issue_tracker": "https://github.com/devprbtt/home-assistant-controlid-faceid/issues",
   "integration_type": "device",
   "iot_class": "local_push",
   "loggers": ["custom_components.controlid"],

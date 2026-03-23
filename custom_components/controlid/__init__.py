@@ -900,6 +900,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     password = entry.data[CONF_PASSWORD]
     webhook_id = entry.data[CONF_WEBHOOK_ID]
     webhook_path = entry.data[CONF_WEBHOOK_PATH]
+    base_url = hass.config.internal_url or hass.config.external_url
+    if not base_url:
+        raise ConfigEntryNotReady(
+            "Set Home Assistant internal or external URL before configuring Control iD"
+        )
 
     session = async_create_clientsession(hass, cookie_jar=CookieJar(unsafe=True))
     client = ControlIDClient(host, username, password, session)
@@ -915,12 +920,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {DATA_RUNTIME: runtime}
     hass.data[DOMAIN][DATA_WEBHOOKS][webhook_id] = runtime
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-
-    base_url = hass.config.internal_url or hass.config.external_url
-    if not base_url:
-        raise ConfigEntryNotReady(
-            "Set Home Assistant internal or external URL before configuring Control iD"
-        )
 
     try:
         await client.async_configure_monitor(base_url, webhook_path)
