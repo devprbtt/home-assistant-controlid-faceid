@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 from urllib.parse import urlparse
@@ -17,6 +17,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_track_time_interval
 
 DOMAIN = "controlid"
 
@@ -33,6 +34,7 @@ DATA_RUNTIME = "runtime"
 
 DEFAULT_REQUEST_TIMEOUT_MS = "5000"
 DEFAULT_SECBOX_ID = 65793
+HEALTHCHECK_INTERVAL = timedelta(seconds=60)
 EVENT_MAP = {
     "7": "Authorized",
     "11": "Door Opened",
@@ -85,6 +87,9 @@ class ControlIDState:
     last_authorized_timestamp: datetime | None = None
     last_authorized_log_id: str | None = None
     registered_users_count: int | None = None
+    available: bool = False
+    last_successful_contact: datetime | None = None
+    last_failed_contact: datetime | None = None
 
 
 @dataclass
@@ -98,6 +103,7 @@ class ControlIDRuntime:
     webhook_path: str
     state: ControlIDState = field(default_factory=ControlIDState)
     _listeners: list[CALLBACK_TYPE] = field(default_factory=list)
+    _healthcheck_unsub: CALLBACK_TYPE | None = None
 
     @callback
     def async_add_listener(self, listener: CALLBACK_TYPE) -> CALLBACK_TYPE:
@@ -117,8 +123,21 @@ class ControlIDRuntime:
             listener()
 
     @callback
+    def async_mark_available(self) -> None:
+        """Mark the device as available."""
+        self.state.available = True
+        self.state.last_successful_contact = datetime.now(timezone.utc)
+
+    @callback
+    def async_mark_unavailable(self) -> None:
+        """Mark the device as unavailable."""
+        self.state.available = False
+        self.state.last_failed_contact = datetime.now(timezone.utc)
+
+    @callback
     def async_handle_door_state(self, payload: dict[str, Any]) -> None:
         """Store secbox or door webhook payload."""
+        self.async_mark_available()
         door_state = payload.get("secbox") or payload.get("door") or {}
         if "open" in door_state:
             self.state.door_open = bool(door_state["open"])
@@ -131,6 +150,7 @@ class ControlIDRuntime:
     @callback
     def async_handle_dao(self, payload: dict[str, Any]) -> None:
         """Store DAO webhook payload."""
+        self.async_mark_available()
         changes = payload.get("object_changes") or []
 
         for change in changes:
@@ -186,9 +206,11 @@ class ControlIDRuntime:
 
     async def async_initialize_state(self) -> None:
         """Populate current state from the device on startup."""
+        startup_ok = False
         try:
             users = await self.client.async_load_users()
             self.state.registered_users_count = len(users)
+            startup_ok = True
         except ControlIDError as err:
             _LOGGER.debug("Unable to load users during startup for %s: %s", self.client.host, err)
 
@@ -212,6 +234,7 @@ class ControlIDRuntime:
                     ]
                 }
             )
+            startup_ok = True
 
         try:
             authorized_log = await self.client.async_load_latest_authorized_access_log()
@@ -243,6 +266,7 @@ class ControlIDRuntime:
                 if authorized_log.get("id") is not None
                 else None
             )
+            startup_ok = True
 
         try:
             door_state = await self.client.async_get_current_door_state(self.secbox_id)
@@ -263,6 +287,7 @@ class ControlIDRuntime:
                     }
                 )
                 self.async_notify()
+                self.async_mark_available()
                 return
 
         try:
@@ -284,12 +309,18 @@ class ControlIDRuntime:
                         "time": door_event.get("timestamp"),
                     }
                 )
+                startup_ok = True
 
+        if startup_ok:
+            self.async_mark_available()
+        else:
+            self.async_mark_unavailable()
         self.async_notify()
 
     async def async_sync_users(self) -> int:
         """Import users from the device into the friendly-name map."""
         users = await self.client.async_load_users()
+        self.async_mark_available()
         merged_map = dict(self.user_map)
         self.state.registered_users_count = len(users)
 
@@ -309,6 +340,42 @@ class ControlIDRuntime:
         )
         self.async_notify()
         return len(merged_map)
+
+    async def async_check_connection(self, now: datetime | None = None) -> None:
+        """Periodically verify that the device is reachable."""
+        try:
+            await self.client.async_login()
+        except ControlIDError as err:
+            _LOGGER.debug("Connectivity check failed for %s: %s", self.client.host, err)
+            was_available = self.state.available
+            self.async_mark_unavailable()
+            if was_available:
+                self.async_notify()
+            return
+
+        was_available = self.state.available
+        self.async_mark_available()
+        if not was_available:
+            self.async_notify()
+
+    @callback
+    def async_start_healthcheck(self) -> None:
+        """Start periodic connectivity checks."""
+        if self._healthcheck_unsub is not None:
+            return
+
+        self._healthcheck_unsub = async_track_time_interval(
+            self.hass,
+            self.async_check_connection,
+            HEALTHCHECK_INTERVAL,
+        )
+
+    @callback
+    def async_stop_healthcheck(self) -> None:
+        """Stop periodic connectivity checks."""
+        if self._healthcheck_unsub is not None:
+            self._healthcheck_unsub()
+            self._healthcheck_unsub = None
 
 
 class ControlIDClient:
@@ -719,6 +786,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(str(err)) from err
 
     await runtime.async_initialize_state()
+    runtime.async_start_healthcheck()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -729,6 +797,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         runtime: ControlIDRuntime = hass.data[DOMAIN][entry.entry_id][DATA_RUNTIME]
+        runtime.async_stop_healthcheck()
         hass.data[DOMAIN][DATA_WEBHOOKS].pop(runtime.webhook_id, None)
         hass.data[DOMAIN].pop(entry.entry_id, None)
 

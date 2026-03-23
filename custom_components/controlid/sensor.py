@@ -47,6 +47,11 @@ class ControlIDLastAccessSensor(SensorEntity):
         return self._runtime.state.last_access_event_name
 
     @property
+    def available(self) -> bool:
+        """Return whether the integration currently has device connectivity."""
+        return self._runtime.state.available
+
+    @property
     def extra_state_attributes(self) -> dict[str, object]:
         """Expose parsed DAO data."""
         user_id = self._runtime.state.last_access_user_id
@@ -103,6 +108,11 @@ class ControlIDLastAccessUserSensor(SensorEntity):
         return self._runtime.user_map.get(user_id, user_id)
 
     @property
+    def available(self) -> bool:
+        """Return whether the integration currently has device connectivity."""
+        return self._runtime.state.available
+
+    @property
     def extra_state_attributes(self) -> dict[str, object]:
         """Expose the underlying user data."""
         user_id = self._runtime.state.last_authorized_user_id
@@ -149,6 +159,11 @@ class ControlIDRegisteredUsersCountSensor(SensorEntity):
     def native_value(self) -> int | None:
         """Return the number of users loaded from the device."""
         return self._runtime.state.registered_users_count
+
+    @property
+    def available(self) -> bool:
+        """Return whether the integration currently has device connectivity."""
+        return self._runtime.state.available
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
