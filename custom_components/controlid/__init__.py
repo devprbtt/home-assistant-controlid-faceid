@@ -38,8 +38,19 @@ HEALTHCHECK_INTERVAL = timedelta(seconds=60)
 WEBHOOK_WATCHDOG_INTERVAL = timedelta(minutes=15)
 WEBHOOK_STALE_AFTER = timedelta(hours=6)
 EVENT_MAP = {
+    "1": "Invalid Device",
+    "2": "Invalid Identification Rule Parameters",
+    "3": "Not Identified",
+    "4": "Pending Identification",
+    "5": "Identification Time Expired",
+    "6": "Access Denied",
     "7": "Authorized",
+    "8": "Pending Access",
+    "9": "User Is Not Administrator",
+    "10": "Non-Identified Access",
     "11": "Door Opened",
+    "12": "Web Access",
+    "13": "Cancel Entry",
 }
 
 _LOGGER = logging.getLogger(__name__)
