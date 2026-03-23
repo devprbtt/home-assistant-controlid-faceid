@@ -70,6 +70,27 @@ class ControlIDSessionExpiredError(ControlIDError):
     """Session token expired or rejected."""
 
 
+def _coerce_door_open(value: Any) -> bool | None:
+    """Normalize door-open values from webhook payloads."""
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "open", "opened", "on"}:
+            return True
+        if normalized in {"0", "false", "closed", "close", "off"}:
+            return False
+
+    return bool(value)
+
+
 def _utc_from_timestamp(value: Any) -> datetime | None:
     """Convert a unix timestamp into UTC datetime."""
     if value in (None, ""):
@@ -165,7 +186,7 @@ class ControlIDRuntime:
         self.async_mark_available()
         door_state = payload.get("secbox") or payload.get("door") or {}
         if "open" in door_state:
-            self.state.door_open = bool(door_state["open"])
+            self.state.door_open = _coerce_door_open(door_state["open"])
         self.state.door_id = door_state.get("id")
         self.state.device_id = payload.get("device_id", self.state.device_id)
         self.state.access_event_id = payload.get("access_event_id")
@@ -936,14 +957,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         await client.async_configure_monitor(base_url, webhook_path)
-    except ControlIDError as err:
-        raise ConfigEntryNotReady(str(err)) from err
+        await runtime.async_initialize_state()
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except Exception:
+        hass.data[DOMAIN][DATA_WEBHOOKS].pop(webhook_id, None)
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        raise
 
-    await runtime.async_initialize_state()
     runtime.async_start_healthcheck()
     runtime.async_start_watchdog()
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 

@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/devprbtt/home-assistant-controlid-faceid/issues",
   "loggers": ["custom_components.controlid"],
   "requirements": [],
-  "version": "0.3.0"
+  "version": "0.3.1"
 }
