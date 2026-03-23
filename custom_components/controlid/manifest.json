@@ -4,6 +4,7 @@
   "codeowners": ["@devprbtt"],
   "config_flow": true,
   "documentation": "https://github.com/devprbtt/home-assistant-controlid-faceid",
+  "dependencies": ["http"],
   "issue_tracker": "https://github.com/devprbtt/home-assistant-controlid-faceid/issues",
   "integration_type": "device",
   "iot_class": "local_push",

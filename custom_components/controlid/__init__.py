@@ -16,12 +16,14 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, Platfor
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 
 DOMAIN = "controlid"
 
 PLATFORMS: list[Platform] = [Platform.BUTTON, Platform.BINARY_SENSOR, Platform.SENSOR]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 CONF_WEBHOOK_ID = "webhook_id"
 CONF_WEBHOOK_PATH = "webhook_path"
