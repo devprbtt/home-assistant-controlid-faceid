@@ -5,9 +5,9 @@
   "config_flow": true,
   "dependencies": ["http"],
   "documentation": "https://github.com/devprbtt/home-assistant-controlid-faceid",
-  "issue_tracker": "https://github.com/devprbtt/home-assistant-controlid-faceid/issues",
   "integration_type": "device",
   "iot_class": "local_push",
+  "issue_tracker": "https://github.com/devprbtt/home-assistant-controlid-faceid/issues",
   "loggers": ["custom_components.controlid"],
   "requirements": [],
   "version": "0.3.0"
