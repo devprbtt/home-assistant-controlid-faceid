@@ -35,6 +35,8 @@ DATA_RUNTIME = "runtime"
 DEFAULT_REQUEST_TIMEOUT_MS = "5000"
 DEFAULT_SECBOX_ID = 65793
 HEALTHCHECK_INTERVAL = timedelta(seconds=60)
+WEBHOOK_WATCHDOG_INTERVAL = timedelta(minutes=15)
+WEBHOOK_STALE_AFTER = timedelta(hours=6)
 EVENT_MAP = {
     "7": "Authorized",
     "11": "Door Opened",
@@ -90,6 +92,8 @@ class ControlIDState:
     available: bool = False
     last_successful_contact: datetime | None = None
     last_failed_contact: datetime | None = None
+    last_webhook_received: datetime | None = None
+    last_watchdog_refresh: datetime | None = None
 
 
 @dataclass
@@ -104,6 +108,8 @@ class ControlIDRuntime:
     state: ControlIDState = field(default_factory=ControlIDState)
     _listeners: list[CALLBACK_TYPE] = field(default_factory=list)
     _healthcheck_unsub: CALLBACK_TYPE | None = None
+    _watchdog_unsub: CALLBACK_TYPE | None = None
+    base_url: str | None = None
 
     @callback
     def async_add_listener(self, listener: CALLBACK_TYPE) -> CALLBACK_TYPE:
@@ -135,8 +141,14 @@ class ControlIDRuntime:
         self.state.last_failed_contact = datetime.now(timezone.utc)
 
     @callback
+    def async_mark_webhook_received(self) -> None:
+        """Record the time of the latest webhook."""
+        self.state.last_webhook_received = datetime.now(timezone.utc)
+
+    @callback
     def async_handle_door_state(self, payload: dict[str, Any]) -> None:
         """Store secbox or door webhook payload."""
+        self.async_mark_webhook_received()
         self.async_mark_available()
         door_state = payload.get("secbox") or payload.get("door") or {}
         if "open" in door_state:
@@ -150,6 +162,7 @@ class ControlIDRuntime:
     @callback
     def async_handle_dao(self, payload: dict[str, Any]) -> None:
         """Store DAO webhook payload."""
+        self.async_mark_webhook_received()
         self.async_mark_available()
         changes = payload.get("object_changes") or []
 
@@ -358,6 +371,115 @@ class ControlIDRuntime:
         if not was_available:
             self.async_notify()
 
+    async def async_refresh_core_state(self) -> None:
+        """Refresh the most important runtime state from the device."""
+        refreshed = False
+
+        try:
+            users = await self.client.async_load_users()
+        except ControlIDError as err:
+            _LOGGER.debug("Unable to refresh users for %s: %s", self.client.host, err)
+        else:
+            self.state.registered_users_count = len(users)
+            refreshed = True
+
+        try:
+            access_log = await self.client.async_load_latest_access_log()
+        except ControlIDError as err:
+            _LOGGER.debug("Unable to refresh latest access log for %s: %s", self.client.host, err)
+        else:
+            self.async_handle_dao(
+                {
+                    "object_changes": [
+                        {
+                            "object": "access_logs",
+                            "type": "watchdog",
+                            "values": access_log,
+                        }
+                    ]
+                }
+            )
+            refreshed = True
+
+        try:
+            authorized_log = await self.client.async_load_latest_authorized_access_log()
+        except ControlIDError as err:
+            _LOGGER.debug(
+                "Unable to refresh latest authorized access log for %s: %s",
+                self.client.host,
+                err,
+            )
+        else:
+            self.state.last_authorized_user_id = (
+                str(authorized_log.get("user_id"))
+                if authorized_log.get("user_id") is not None
+                else None
+            )
+            self.state.last_authorized_event_code = (
+                str(authorized_log.get("event"))
+                if authorized_log.get("event") is not None
+                else None
+            )
+            self.state.last_authorized_event_name = (
+                EVENT_MAP.get(
+                    self.state.last_authorized_event_code,
+                    self.state.last_authorized_event_code,
+                )
+                if self.state.last_authorized_event_code is not None
+                else None
+            )
+            self.state.last_authorized_timestamp = _utc_from_timestamp(authorized_log.get("time"))
+            self.state.last_authorized_log_id = (
+                str(authorized_log.get("id"))
+                if authorized_log.get("id") is not None
+                else None
+            )
+            refreshed = True
+
+        try:
+            door_state = await self.client.async_get_current_door_state(self.secbox_id)
+        except ControlIDError as err:
+            _LOGGER.debug("Unable to refresh direct door state for %s: %s", self.client.host, err)
+        else:
+            if door_state is not None:
+                self.async_handle_door_state(
+                    {
+                        "secbox": {
+                            "id": door_state.get("id"),
+                            "open": door_state.get("open"),
+                        },
+                    }
+                )
+                refreshed = True
+
+        if refreshed:
+            self.async_mark_available()
+            self.state.last_watchdog_refresh = datetime.now(timezone.utc)
+            self.async_notify()
+
+    async def async_watchdog_webhooks(self, now: datetime | None = None) -> None:
+        """Detect stale webhook delivery and self-heal when possible."""
+        last_webhook = self.state.last_webhook_received
+        if last_webhook is not None and datetime.now(timezone.utc) - last_webhook < WEBHOOK_STALE_AFTER:
+            return
+
+        _LOGGER.debug(
+            "Webhook watchdog refresh triggered for %s; last webhook=%s",
+            self.client.host,
+            last_webhook,
+        )
+        await self.async_refresh_core_state()
+
+        if self.base_url is not None:
+            try:
+                await self.client.async_configure_monitor(self.base_url, self.webhook_path)
+            except ControlIDError as err:
+                _LOGGER.debug(
+                    "Unable to reconfigure monitor during watchdog refresh for %s: %s",
+                    self.client.host,
+                    err,
+                )
+
     @callback
     def async_start_healthcheck(self) -> None:
         """Start periodic connectivity checks."""
@@ -371,11 +493,30 @@ class ControlIDRuntime:
         )
 
     @callback
+    def async_start_watchdog(self) -> None:
+        """Start webhook freshness watchdog checks."""
+        if self._watchdog_unsub is not None:
+            return
+
+        self._watchdog_unsub = async_track_time_interval(
+            self.hass,
+            self.async_watchdog_webhooks,
+            WEBHOOK_WATCHDOG_INTERVAL,
+        )
+
+    @callback
     def async_stop_healthcheck(self) -> None:
         """Stop periodic connectivity checks."""
         if self._healthcheck_unsub is not None:
             self._healthcheck_unsub()
             self._healthcheck_unsub = None
+
+    @callback
+    def async_stop_watchdog(self) -> None:
+        """Stop webhook watchdog checks."""
+        if self._watchdog_unsub is not None:
+            self._watchdog_unsub()
+            self._watchdog_unsub = None
 
 
 class ControlIDClient:
@@ -768,6 +909,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         client=client,
         webhook_id=webhook_id,
         webhook_path=webhook_path,
+        base_url=base_url,
     )
 
     hass.data[DOMAIN][entry.entry_id] = {DATA_RUNTIME: runtime}
@@ -787,6 +929,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await runtime.async_initialize_state()
     runtime.async_start_healthcheck()
+    runtime.async_start_watchdog()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -798,6 +941,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         runtime: ControlIDRuntime = hass.data[DOMAIN][entry.entry_id][DATA_RUNTIME]
         runtime.async_stop_healthcheck()
+        runtime.async_stop_watchdog()
         hass.data[DOMAIN][DATA_WEBHOOKS].pop(runtime.webhook_id, None)
         hass.data[DOMAIN].pop(entry.entry_id, None)
 

@@ -96,6 +96,8 @@ class ControlIDDeviceOnlineBinarySensor(BinarySensorEntity):
         return {
             "last_successful_contact": self._runtime.state.last_successful_contact,
             "last_failed_contact": self._runtime.state.last_failed_contact,
+            "last_webhook_received": self._runtime.state.last_webhook_received,
+            "last_watchdog_refresh": self._runtime.state.last_watchdog_refresh,
         }
 
     async def async_added_to_hass(self) -> None:
